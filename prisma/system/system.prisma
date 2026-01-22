@@ -1,0 +1,171 @@
+generator client {
+  provider        = "prisma-client-js"
+  output          = "../../generated/system"
+  previewFeatures = ["clientExtensions"]
+  engineType = "binary"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+/** ----------------------------------------
+ * ENUM: Tenant Status
+ * ----------------------------------------
+ */
+enum TenantStatus {
+  ACTIVE
+  DOWN
+  DEGRADED
+  SUSPENDED
+  DROPPED
+  UNKNOWN
+}
+
+/** ----------------------------------------
+ * TENANTS: Stores all tenant metadata
+ * ----------------------------------------
+ */
+model Tenant {
+  id          String       @id @default(uuid())
+  name        String       @unique
+  databaseUrl String
+  isActive    Boolean      @default(true)
+  status      TenantStatus @default(ACTIVE)
+  tenant_status TenantStatus?
+  lastHeartbeat DateTime?
+  lastError   String?
+
+  dbUser               String?
+  dbPassword           String?
+  notificationsEnabled Boolean      @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  agents Agent[]
+  events Event[]
+
+  @@map("tenants")
+}
+
+/** ----------------------------------------
+ * SYSTEM MIGRATIONS: Track applied system migrations
+ * ----------------------------------------
+ */
+model MigrationVersion {
+  id        Int      @id @default(autoincrement())
+  version   String   @unique
+  appliedAt DateTime @default(now())
+
+  @@map("_migration_versions")
+}
+
+/** ----------------------------------------
+ * MIGRATION LOCK: Prevent concurrent migrations
+ * ----------------------------------------
+ */
+model MigrationLock {
+  id       Int      @id @default(1)
+  locked   Boolean  @default(false)
+  lockedAt DateTime?
+}
+
+/** ----------------------------------------
+ * SCHEMA VERSION: Track system schema version
+ * ----------------------------------------
+ */
+model SchemaVersion {
+  id        Int      @id @default(1)
+  version   String
+  appliedAt DateTime @default(now())
+}
+
+/** ----------------------------------------
+ * System Settings
+ * ----------------------------------------
+ */
+model SystemSetting {
+  id    Int     @id @default(autoincrement())
+  key   String  @unique
+  value String
+}
+
+/** ----------------------------------------
+ * Audit logs
+ * ----------------------------------------
+ */
+model AuditLog {
+  id         Int      @id @default(autoincrement())
+  tenantId   String?
+  action     String
+  performedBy String?
+  createdAt  DateTime @default(now())
+}
+
+/** ----------------------------------------
+ * Tenant Agents (online/offline)
+ * ----------------------------------------
+ */
+model Agent {
+  agentId  String   @id
+  tenantId String
+  version  String?
+  lastSeen DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@index([tenantId])
+  @@map("tenant_agents")
+}
+
+/** ----------------------------------------
+ * Events
+ * ----------------------------------------
+ */
+model Event {
+  id         String   @id
+  tenantId   String
+  agentId    String?
+  type       String
+  payload    Json
+  occurredAt DateTime
+  receivedAt DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@index([tenantId])
+  @@index([type])
+  @@index([occurredAt])
+  @@map("events")
+}
+
+/** ----------------------------------------
+ * Event Cursors
+ * ----------------------------------------
+ */
+model EventCursor {
+  id           Int      @id @default(autoincrement())
+  consumerName String   @unique
+  lastEventId  String?
+  updatedAt    DateTime @default(now())
+
+  @@map("event_cursors")
+}
+
+/** ----------------------------------------
+ * Dead Events
+ * ----------------------------------------
+ */
+model DeadEvent {
+  id         String   @id
+  tenantId   String
+  type       String
+  payload    Json
+  error      String
+  receivedAt DateTime @default(now())
+
+  @@index([tenantId])
+  @@index([type])
+  @@map("dead_events")
+}

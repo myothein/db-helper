@@ -1,0 +1,59 @@
+{
+  "name": "@repo/db-helper",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "db-helper": "dist/cli.js",
+    "db-helper-studio": "dist/cli-studio.js"
+  },
+  "scripts": {
+    "build": "pnpm run clean && tsup",
+    "dev": "tsx src/cli.ts",
+    "generate": "ts-node src/generate-db-helper.ts",
+    "lint": "eslint . --ext .ts",
+    "format": "prettier --write .",
+    "test": "vitest run",
+    "clean": "rimraf dist"
+  },
+  "dependencies": {
+    "@prisma/adapter-pg": "^7.1.0",
+    "@prisma/client": "^7.1.0",
+    "@prisma/client-runtime-utils": "^7.1.0",
+    "commander": "^14.0.2",
+    "dotenv": "^17.2.3",
+    "pg": "^8.16.3",
+    "uuid": "^13.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.3",
+    "@types/pg": "^8.15.6",
+    "@types/uuid": "^11.0.0",
+    "eslint": "^8.0.0",
+    "prettier": "^3.0.0",
+    "prisma": "^7.1.0",
+    "rimraf": "^6.1.2",
+    "ts-node": "^10.0.0",
+    "tsup": "^6.0.0",
+    "typescript": "^5.1.0",
+    "vitest": "^0.34.0"
+  },
+  "exports": {
+    ".": {
+      "require": "./dist/index.cjs",
+      "import": "./dist/index.cjs",
+      "types": "./dist/index.d.ts"
+    },
+    "./cli": {
+      "require": "./dist/cli.cjs",
+      "import": "./dist/cli.cjs"
+    },
+    "./cli-studio": {
+      "require": "./dist/cli-studio.cjs",
+      "import": "./dist/cli-studio.cjs"
+    },
+    "./package.json": "./package.json"
+  }
+}

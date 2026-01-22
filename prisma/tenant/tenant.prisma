@@ -1,0 +1,448 @@
+generator client {
+  provider        = "prisma-client-js"
+  output          = "../../generated/tenant"
+  previewFeatures = ["clientExtensions"]
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+/* ======================
+   ENUMS
+====================== */
+enum UserSex {
+  MALE
+  FEMALE
+}
+
+enum Day {
+  MONDAY
+  TUESDAY
+  WEDNESDAY
+  THURSDAY
+  FRIDAY
+}
+
+enum BloodType {
+  A_POS
+  A_NEG
+  B_POS
+  B_NEG
+  AB_POS
+  AB_NEG
+  O_POS
+  O_NEG
+}
+
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+  EXCUSED
+}
+
+/* ======================
+   UTILITY TABLES
+====================== */
+model SeedHistory {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  checksum  String
+  appliedAt DateTime @default(now()) @map("applied_at")
+
+  @@map("seed_history")
+}
+
+/* ======================
+   TENANT SETTINGS & FLAGS
+====================== */
+model Setting {
+  id        String   @id @default(uuid())
+  key       String   @unique
+  value     String
+  groupName String?  @map("group_name")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("setting")
+}
+
+model FeatureFlag {
+  id        String   @id @default(uuid())
+  key       String
+  enabled   Boolean  @default(false)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("feature_flag")
+  @@index([key])
+}
+
+model TenantMetadata {
+  id        String   @id @default(uuid())
+  key       String
+  value     String
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("tenant_metadata")
+  @@index([key])
+}
+
+/* ======================
+   NOTIFICATIONS
+====================== */
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id") @db.Uuid
+  user      User     @relation(fields: [userId], references: [id])
+
+  message   String
+  read      Boolean  @default(false)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("notification")
+}
+
+/* ======================
+   ROLES & USERS
+====================== */
+model Role {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String   @unique
+  description String?
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  users User[]
+
+  @@map("role")
+}
+
+model User {
+  id        String   @id @default(uuid()) @db.Uuid
+  username  String   @unique
+  email     String?  @unique
+
+  firstName String?  @map("first_name")
+  lastName  String?  @map("last_name")
+
+  isActive  Boolean  @default(true) @map("is_active")
+
+  roleId    String?  @map("role_id") @db.Uuid
+  role      Role?    @relation(fields: [roleId], references: [id])
+
+  notifications Notification[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("user")
+}
+
+/* ======================
+   CORE USERS
+====================== */
+model Parent {
+  id          String   @id @default(uuid())
+  tenant_code String
+  username    String
+  name        String
+  surname     String
+  email       String?
+  phone       String
+  address     String
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  deletedAt   DateTime?
+
+  students    StudentParent[]
+
+  @@unique([tenant_code, username])
+  @@map("parent")
+}
+
+model Student {
+  id          String   @id @default(uuid())
+  tenant_code String
+  username    String
+  name        String
+  surname     String
+  email       String?
+  phone       String?
+  address     String
+  img         String?
+  bloodType   BloodType
+  sex         UserSex
+  birthday    DateTime
+
+  classId     Int
+  gradeId     Int
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  deletedAt   DateTime?
+
+  parentLinks StudentParent[]
+  class       Class    @relation(fields: [classId], references: [id])
+  grade       Grade    @relation(fields: [gradeId], references: [id])
+
+  attendances Attendance[]
+  results     Result[]
+
+  @@index([tenant_code])
+  @@unique([tenant_code, username])
+  @@map("student")
+}
+
+model StudentParent {
+  studentId String
+  parentId  String
+
+  student   Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  parent    Parent  @relation(fields: [parentId], references: [id], onDelete: Cascade)
+
+  @@id([studentId, parentId])
+  @@map("student_parent")
+}
+
+model Teacher {
+  id          String   @id @default(uuid())
+  tenant_code String
+  username    String
+  name        String
+  surname     String
+  email       String?
+  phone       String?
+  address     String
+  img         String?
+  bloodType   BloodType
+  sex         UserSex
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  deletedAt   DateTime?
+
+  supervisedClasses Class[] @relation("SupervisorClasses")
+  lessons           Lesson[]
+  teacherClasses    TeacherClass[]
+
+  @@unique([tenant_code, username])
+  @@map("teacher")
+}
+
+/* ======================
+   ACADEMIC STRUCTURE
+====================== */
+model Grade {
+  id          Int      @id @default(autoincrement())
+  tenant_code String
+  level       Int
+
+  students    Student[]
+  classes     Class[]
+
+  @@unique([tenant_code, level])
+    @@map("grade")
+}
+
+model Class {
+  id           Int      @id @default(autoincrement())
+  tenant_code  String
+  name         String
+  capacity     Int
+
+  supervisorId String?
+  supervisor   Teacher? @relation("SupervisorClasses", fields: [supervisorId], references: [id])
+
+  gradeId      Int
+  grade        Grade    @relation(fields: [gradeId], references: [id])
+
+  students       Student[]
+  lessons        Lesson[]
+  events         Event[]
+  announcements  Announcement[]
+  teacherClasses TeacherClass[]
+
+  @@unique([tenant_code, name])
+    @@map("class")
+}
+
+model TeacherClass {
+  teacherId String
+  classId   Int
+
+  teacher   Teacher @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  class     Class   @relation(fields: [classId], references: [id], onDelete: Cascade)
+
+  @@id([teacherId, classId])
+    @@map("teacher_class")
+}
+
+/* ======================
+   SUBJECTS & LESSONS
+====================== */
+model Subject {
+  id          Int       @id @default(autoincrement())
+  tenant_code String
+  name        String
+
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  deletedAt   DateTime? @map("deleted_at")
+
+  lessons     Lesson[]
+
+  @@unique([tenant_code, name])
+  @@map("subject")
+}
+
+model Lesson {
+  id          Int      @id @default(autoincrement())
+  tenant_code String
+  name        String
+  day         Day
+
+  startTime   DateTime @db.Time
+  endTime     DateTime @db.Time
+
+  subjectId   Int
+  classId     Int
+  teacherId   String
+
+  subject     Subject @relation(fields: [subjectId], references: [id])
+  class       Class   @relation(fields: [classId], references: [id])
+  teacher     Teacher @relation(fields: [teacherId], references: [id])
+
+  exams       Exam[]
+  assignments Assignment[]
+  attendances Attendance[]
+
+  @@unique([tenant_code, day, classId, startTime])
+  @@index([classId])
+  @@index([teacherId])
+    @@map("lesson")
+}
+
+/* ======================
+   ASSESSMENTS
+====================== */
+model Exam {
+  id        Int      @id @default(autoincrement())
+  title     String
+  startTime DateTime
+  endTime   DateTime
+
+  lessonId  Int
+  lesson    Lesson   @relation(fields: [lessonId], references: [id])
+
+  results   Result[]
+    @@map("exam")
+}
+
+model Assignment {
+  id        Int      @id @default(autoincrement())
+  title     String
+  startDate DateTime
+  dueDate   DateTime
+
+  lessonId  Int
+  lesson    Lesson   @relation(fields: [lessonId], references: [id])
+
+  results   Result[]
+    @@map("assignment")
+}
+
+model Result {
+  id           Int      @id @default(autoincrement())
+  score        Int
+
+  examId       Int?
+  assignmentId Int?
+
+  studentId    String
+  student      Student @relation(fields: [studentId], references: [id])
+
+  exam         Exam?       @relation(fields: [examId], references: [id])
+  assignment   Assignment? @relation(fields: [assignmentId], references: [id])
+
+  @@index([studentId])
+  @@index([examId])
+  @@index([assignmentId])
+    @@map("result")
+}
+
+/* ======================
+   ATTENDANCE
+====================== */
+model Attendance {
+  id          Int      @id @default(autoincrement())
+  date        DateTime
+  status      AttendanceStatus @default(PRESENT)
+
+  studentId   String
+  lessonId    Int
+
+  student     Student @relation(fields: [studentId], references: [id])
+  lesson      Lesson  @relation(fields: [lessonId], references: [id])
+
+  @@unique([studentId, lessonId, date])
+    @@map("attendance")
+}
+
+/* ======================
+   EVENTS & ANNOUNCEMENTS
+====================== */
+model Event {
+  id          Int      @id @default(autoincrement())
+  tenant_code String
+  title       String
+  description String
+  startTime   DateTime
+  endTime     DateTime
+
+  classId     Int?
+  class       Class? @relation(fields: [classId], references: [id])
+
+  @@index([tenant_code])
+    @@map("event")
+}
+
+model Announcement {
+  id          Int      @id @default(autoincrement())
+  tenant_code String
+  title       String
+  description String
+  date        DateTime
+
+  classId     Int?
+  class       Class? @relation(fields: [classId], references: [id])
+
+  @@index([tenant_code])
+    @@map("announcement")
+}
+
+model LocalEvent {
+  id            String   @id @default(uuid())
+  tenant_code   String
+  agent_id      String
+  aggregate_type String
+  aggregate_id  String
+  event_type    String
+  payload       Json
+  created_at    DateTime @default(now())
+  occurred_at   DateTime @default(now())
+  sent          Int      @default(0)
+  status        String   @default("pending")
+  retry_count   Int      @default(0)
+  event_version Int      @default(1)
+  headers       Json     @default("{}")
+
+  @@map("local_events")
+  @@index([tenant_code, sent])
+}
