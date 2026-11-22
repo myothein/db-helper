@@ -123,37 +123,12 @@ export class DBHelper {
         });
     }
 
-    async dropTenant(tenantName: string) {
-        return this.withProvider(async (provider) => {
-            Logger.warn(`Dropping tenant: ${tenantName}`);
-            return this.tenantService.dropTenant(tenantName);
-        });
+    async dropTenant(_tenantName: string): Promise<never> {
+        throw new Error("Destructive tenant drop disabled pending verified backup/restore and approval");
     }
 
-    async resetTenant(tenantName: string) {
-        return this.withProvider(async (provider) => {
-            Logger.warn(`RESETTING tenant: ${tenantName}`);
-            const tenant = await this.tenantService.getTenantByName(tenantName);
-            if (!tenant) throw new Error(`Tenant "${tenantName}" not found`);
-
-            // Terminate connections
-            await provider.executeTenant(tenantName, `
-                SELECT pg_terminate_backend(pid)
-                FROM pg_stat_activity
-                WHERE datname = $1
-            `, [tenantName]);
-
-            Logger.warn(`Dropping database "${tenantName}"`);
-            await provider.executeTenant(tenantName, `DROP DATABASE IF EXISTS "${tenantName}"`);
-
-            Logger.info(`Recreating database "${tenantName}"`);
-            await provider.executeTenant(tenantName, `CREATE DATABASE "${tenantName}"`);
-
-            await this.migrateTenant(tenantName);
-            await this.seedRunner.run(tenantName);
-
-            Logger.info(`Tenant reset completed: ${tenantName}`);
-        });
+    async resetTenant(_tenantName: string): Promise<never> {
+        throw new Error("Tenant reset disabled pending verified backup/restore and release approval");
     }
 
     async seedTenant(tenantName: string) {
@@ -236,49 +211,10 @@ export class DBHelper {
     /** =========================
      * Rotate tenant DB credentials
      *========================= */
-    async rotateCredentials(tenantName: string) {
-        return this.withProvider(async (provider) => {
-            Logger.info(`Rotating credentials for tenant: ${tenantName}`);
-            const tenant = await this.tenantService.getTenantByName(tenantName);
-            if (!tenant) throw new Error(`Tenant "${tenantName}" not found`);
-
-            const newPassword = randomBytes(16).toString("hex");
-
-            const roleExists = await provider.execute(`
-                SELECT 1 FROM pg_roles WHERE rolname = '${tenantName}'
-            `);
-
-            if (!roleExists) {
-                Logger.warn(`Role "${tenantName}" does not exist. Creating now.`);
-                await provider.execute(`
-                    CREATE ROLE "${tenantName}" LOGIN PASSWORD '${newPassword}';
-                `);
-                await provider.execute(`
-                    GRANT ALL PRIVILEGES ON DATABASE "${tenantName}" TO "${tenantName}";
-                `);
-            } else {
-                await provider.execute(`
-                    ALTER ROLE "${tenantName}" WITH PASSWORD '${newPassword}';
-                `);
-            }
-
-            await provider.getSystemClient().tenant.update({
-                where: { name: tenantName },
-                data: { dbPassword: newPassword },
-            });
-
-            Logger.info(`Tenant credentials rotated successfully: ${tenantName}`);
-            return {
-                username: tenantName,
-                password: newPassword,
-                databaseUrl: tenant.databaseUrl || `postgres://.../${tenantName}`,
-            };
-        });
+    async rotateCredentials(_tenantName: string): Promise<never> {
+        throw new Error("Credential rotation disabled until parameterized role management and secret-store integration");
     }
 
-    /** =========================
-     * Migrate all tenants
-     *========================= */
     async migrateAllTenants() {
         const tenants = await this.listTenants();
         for (const tenant of tenants) {
@@ -309,56 +245,10 @@ export class DBHelper {
     /** =========================
      * Provision a new tenant
      *========================= */
-    async provisionTenant(name: string) {
-        return this.withProvider(async (provider) => {
-            Logger.info(`Provisioning tenant: ${name}`);
-
-            await createTenantDatabase(name);
-
-            const password = randomBytes(16).toString("hex");
-
-            const roleExists = await provider.execute(`
-                SELECT 1 FROM pg_roles WHERE rolname = '${name}';
-            `);
-
-            if (!roleExists) {
-                Logger.info(`Creating DB role for tenant: ${name}`);
-                await provider.execute(`
-                    CREATE ROLE "${name}" LOGIN PASSWORD '${password}';
-                `);
-                await provider.execute(`
-                    GRANT ALL PRIVILEGES ON DATABASE "${name}" TO "${name}";
-                `);
-            }
-
-            const tenant = await this.tenantService.createTenant(name);
-
-            await provider.getSystemClient().tenant.update({
-                where: { name },
-                data: {
-                    dbUser: name,
-                    dbPassword: password,
-                    databaseUrl: tenant.databaseUrl || `postgres://.../${name}`,
-                },
-            });
-
-            await this.migrateTenant(name);
-            Logger.info(`Seeding tenant database: ${name}`);
-            await this.seedRunner.run(name);
-
-            Logger.info(`Tenant created: ${name}`);
-
-            return {
-                username: name,
-                password,
-                databaseUrl: tenant.databaseUrl || `postgres://.../${name}`,
-            };
-        });
+    async provisionTenant(_name: string): Promise<never> {
+        throw new Error("Tenant provisioning disabled until safe identifier/role provisioning QA passes");
     }
 
-    /** =========================
-     * Get pending migrations
-     *========================= */
     async getPendingMigrations(tenantName: string) {
         return this.withProvider(async (provider) => {
             const tenant = await this.tenantService.getTenantByName(tenantName);
