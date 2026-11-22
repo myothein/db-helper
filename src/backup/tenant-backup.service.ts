@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { createReadStream, existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, createReadStream, existsSync, mkdirSync, openSync, readSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import type { TenantService } from '../tenants/tenant.service';
@@ -51,10 +51,17 @@ export class TenantBackupService {
                 '--no-password','--host',db.host,'--port',String(db.port),
                 '--username',db.user,'--dbname',db.database,'--file',partial
             ],{env,timeout:300_000});
-            if (!existsSync(partial) || statSync(partial).size < 64 ||
-                readFileSync(partial).subarray(0,5).toString('ascii') !== 'PGDMP') {
-                throw new Error('Invalid PostgreSQL custom-format archive');
+            if (!existsSync(partial) || statSync(partial).size < 64) {
+                throw new Error('Missing or truncated PostgreSQL archive');
             }
+            const signature = Buffer.alloc(5);
+            const fd = openSync(partial, 'r');
+            try {
+                if (readSync(fd, signature, 0, 5, 0) !== 5 ||
+                    signature.toString('ascii') !== 'PGDMP') {
+                    throw new Error('Invalid PostgreSQL custom-format archive');
+                }
+            } finally { closeSync(fd); }
             // pg_restore --list checks that the archive is parseable, without DB writes.
             await this.run('pg_restore',['--list',partial],{env,timeout:30_000});
             const digest=await sha256(partial);
