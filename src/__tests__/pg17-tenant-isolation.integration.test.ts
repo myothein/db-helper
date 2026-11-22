@@ -77,9 +77,16 @@ active('PostgreSQL 17: two real database-scoped tenants reject cross-tenant acce
 },120_000);
 
 it('CI-only provisioning must reject environments without isolated CI capability',async()=>{
-    const fake = {query:async()=>{throw Error('Should not touch PostgreSQL')}} as unknown as Client;
-    await expect(provisionCiTenantDatabase(fake,{
-        databaseName:'qa_isolation_probe', roleName:'qa_isolation_probe_role',
-        password:randomBytes(32).toString('base64url')
-    })).rejects.toThrow(/gate is not enabled|invalid or outside isolated naming scope/);
+    const original=process.env.RUN_PG_TENANT_ISOLATION;
+    const fake={query:async()=>{throw Error('Should not touch PostgreSQL')}} as unknown as Client;
+    delete process.env.RUN_PG_TENANT_ISOLATION;
+    try {
+        await expect(provisionCiTenantDatabase(fake,{
+            databaseName:'qa_isolation_probe',roleName:'qa_isolation_probe_role',
+            password:randomBytes(32).toString('base64url')
+        })).rejects.toThrow(/gate is not enabled/);
+    } finally {
+        if(original===undefined)delete process.env.RUN_PG_TENANT_ISOLATION;
+        else process.env.RUN_PG_TENANT_ISOLATION=original;
+    }
 });

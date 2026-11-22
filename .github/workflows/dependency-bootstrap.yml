@@ -61,6 +61,7 @@ jobs:
     timeout-minutes: 12
     env:
       RUN_PG_BACKUP_E2E: '1'
+      RUN_PG_TENANT_ISOLATION: '1'
     services:
       postgres:
         image: postgres:17

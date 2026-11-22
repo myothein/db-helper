@@ -27,28 +27,10 @@ export class TenantService {
 
     async createTenant(name: string): Promise<Tenant> {
         validateTenantName(name);
-        const system = this.provider.getSystemClient();
-
-        const existing = await system.tenant.findUnique({ where: { name } });
-        if (existing) {
-            Logger.info(`Tenant "${name}" already exists. Reusing.`);
-            return existing;
-        }
-
-        const databaseUrl =
-            dbConfig.defaultTenantDatabaseUrlTemplate.replace("{tenant}", name);
-
-        // Create physical DB
-        await this.provider.getTenantConnection(name);
-
-        Logger.info(`Registering tenant "${name}" in system DB`);
-        return system.tenant.create({
-            data: {
-                name,
-                databaseUrl,
-                isActive: true,
-            },
-        });
+        // The old method persisted databaseUrl (including credentials) in the
+        // system registry and reused existing tenants without authorization.
+        // A reviewed secret-store registration workflow is still required.
+        throw new Error('Legacy tenant registration disabled: provision via approved isolated workflow');
     }
 
     /* ============================
