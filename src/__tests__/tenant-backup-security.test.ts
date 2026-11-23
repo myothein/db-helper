@@ -76,6 +76,37 @@ describe('verified tenant backups never execute a shell command', () => {
             expect(readdirSync(dir)).toHaveLength(0);
         } finally{rmSync(dir,{recursive:true,force:true});}
     });
+    it('rejects cross-tenant registry DB URL mismatch before any dump, directory creation or file writes', async () => {
+        const root=mkdtempSync(path.join(tmpdir(),'db-helper-tenant-mismatch-'));
+        const backupDir=path.join(root,'not-created');
+        const runner=vi.fn<Parameters<BackupCommandRunner>,ReturnType<BackupCommandRunner>>();
+        const lookup=vi.fn(async()=>({
+            databaseUrl:'postgresql://qa_user:synthetic-password@localhost:5432/tenant_b'
+        }));
+        const tenant={getTenantByName:lookup} as unknown as TenantService;
+        try {
+            const svc=new TenantBackupService({} as PostgresProvider,tenant,runner,backupDir);
+            await expect(svc.backupTenant('tenant_a'))
+                .rejects.toThrow(/source database does not match/);
+            expect(lookup).toHaveBeenCalledWith('tenant_a');
+            expect(runner).not.toHaveBeenCalled();
+            expect(readdirSync(root)).toEqual([]);
+        } finally {rmSync(root,{recursive:true,force:true});}
+    });
+    it('rejects encoded cross-tenant database URL aliases', async () => {
+        const root=mkdtempSync(path.join(tmpdir(),'db-helper-encoded-mismatch-'));
+        const runner=vi.fn<Parameters<BackupCommandRunner>,ReturnType<BackupCommandRunner>>();
+        const tenant={getTenantByName:async()=>({
+            databaseUrl:'postgresql://qa_user:synthetic-password@localhost:5432/tenant%5Fb'
+        })} as unknown as TenantService;
+        try {
+            const svc=new TenantBackupService({} as PostgresProvider,tenant,runner,root);
+            await expect(svc.backupTenant('tenant_a'))
+                .rejects.toThrow(/source database does not match/);
+            expect(runner).not.toHaveBeenCalled();
+            expect(readdirSync(root)).toEqual([]);
+        } finally {rmSync(root,{recursive:true,force:true});}
+    });
     it('rejects bad tenant identifiers before contacting DB provider', async()=>{
         const tenant={getTenantByName:vi.fn()} as unknown as TenantService;
         const backup=new TenantBackupService({} as PostgresProvider,tenant);
