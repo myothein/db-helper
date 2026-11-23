@@ -35,3 +35,14 @@
 ## Compatibility warning
 
 This hardening branch is intentionally **breaking** for previously unsafe destructive operations and changes backup artifacts from `.sql` to `.dump`. Calling clients and operators must be updated before any merge. Do not merge to main or deploy just because the new CI tests pass.
+
+## 2026-11-23 — Cross-tenant backup and archive-file permission hardening
+
+- `backupTenant(name)` now verifies the registry database URL's **decoded database name exactly matches the requested tenant identifier**, before directory creation or any `pg_dump` invocation. This prevents a stale or malicious tenant registry mapping from silently exporting another university tenant's data.
+- Adds negative tests for wrong database names and URL-encoded cross-tenant aliases. The backup runner must not execute and no dump artifacts may be created on rejection.
+- Existing backup directories are rejected on POSIX if they are symbolic links, have group/other permissions, are owned by a different Unix user, or use a redirected path. The randomly named `.partial` file is reserved exclusively with mode `0600` before PostgreSQL writes it.
+- Regression tests check private intermediate file mode and reject pre-existing publicly readable output directories. Existing PostgreSQL 17 disposable backup/independent-restore tests remain the validation target.
+- **Important Windows limitation:** POSIX file modes do not establish NTFS ACL safety. Windows folder/file ACLs, EFS/BitLocker-at-rest as appropriate, backup copies, operator authorization and real recovery tests require separate acceptance before a production release.
+- A successful SHA-256 manifest and `pg_restore --list` check do not provide authenticated signature custody or production disaster-recovery guarantees.
+
+Status remains PRODUCTION NO-GO. No production data or UIMS V1 was accessed by this code change.
