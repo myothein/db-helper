@@ -91,3 +91,60 @@ jobs:
           npm run build
       - name: PostgreSQL 17 disposable backup and independent restore parity test
         run: npm test
+      - name: Verify additive student idempotency migration and uniqueness in disposable PostgreSQL 17
+        shell: bash
+        run: |
+          node <<'NODE'
+          const { Client } = require('pg');
+          const fs = require('node:fs');
+          (async () => {
+            const db = new Client({
+              host:'127.0.0.1',port:5432,user:'ci_qa',
+              password:'ci_only_password',database:'tenant_backup_ci'
+            });
+            await db.connect();
+            try {
+              const sql = fs.readFileSync(
+                'prisma/tenant/migrations/20261123151000_student_write_idempotency/migration.sql',
+                'utf8'
+              );
+              await db.query(sql);
+              const digest = 'a'.repeat(64);
+              const fingerprint = 'b'.repeat(64);
+              const params = ['synthetic_tenant',digest,'synthetic_actor','student.create',
+                'collection',fingerprint];
+              const insert =
+                'INSERT INTO student_write_idempotency ' +
+                '(tenant_code,key_digest,principal_id,operation,resource_id,request_digest) ' +
+                'VALUES ($1,$2,$3,$4,$5,$6)';
+              await db.query(insert,params);
+              let duplicate = false;
+              try { await db.query(insert,params); }
+              catch (e) { if (e.code === '23505') duplicate = true; else throw e; }
+              if (!duplicate) throw Error('Missing unique tenant/key replay serialization');
+              await db.query(
+                'UPDATE student_write_idempotency SET response_status=201,response_body=$1::jsonb ' +
+                'WHERE tenant_code=$2 AND key_digest=$3',
+                [JSON.stringify({id:'synthetic',classId:1,gradeId:1}),params[0],params[1]]
+              );
+              const row = await db.query(
+                'SELECT response_status,response_body FROM student_write_idempotency ' +
+                'WHERE tenant_code=$1 AND key_digest=$2',
+                [params[0],params[1]]
+              );
+              if(row.rows[0].response_status!==201 ||
+                Object.keys(row.rows[0].response_body).sort().join(',')!=='classId,gradeId,id') {
+                throw Error('Invalid replay response storage');
+              }
+              let rejected = false;
+              try { await db.query(
+                'UPDATE student_write_idempotency SET response_status=500 ' +
+                'WHERE tenant_code=$1 AND key_digest=$2',[params[0],params[1]]
+              ); }
+              catch(e){ if(e.code==='23514')rejected=true;else throw e; }
+              if(!rejected)throw Error('Response status constraint did not fail closed');
+              await db.query('DELETE FROM student_write_idempotency');
+              console.log('PASS: migration, uniqueness, replay response and constraints');
+            } finally { await db.end(); }
+          })().catch(e=>{ console.error('Disposable migration QA failed: '+e.name); process.exitCode=1; });
+          NODE
