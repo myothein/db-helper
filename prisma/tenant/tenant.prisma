@@ -446,3 +446,23 @@ model LocalEvent {
   @@map("local_events")
   @@index([tenant_code, sent])
 }
+
+/**
+ * Durable tenant-local student-write replay ledger.
+ * No raw request idempotency keys, request bodies, or sensitive student fields.
+ * Migration: 20261123151000_student_write_idempotency
+ */
+model StudentWriteIdempotency {
+  tenant_code     String
+  key_digest      String   @db.VarChar(64)
+  principal_id    String
+  operation       String
+  resource_id     String
+  request_digest  String   @db.VarChar(64)
+  response_status Int?
+  response_body   Json?
+  created_at      DateTime @default(now()) @db.Timestamptz(6)
+
+  @@id([tenant_code, key_digest])
+  @@map("student_write_idempotency")
+}
