@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { closeSync, createReadStream, existsSync, mkdirSync, openSync, readSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, createReadStream, existsSync, lstatSync, mkdirSync, openSync, readSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import type { TenantService } from '../tenants/tenant.service';
@@ -43,6 +43,18 @@ export class TenantBackupService {
         }
         // Connection URLs are not logged, embedded in shell commands or written to manifests.
         mkdirSync(this.backupDir, {recursive:true,mode:0o700});
+        const backupDirStats=lstatSync(this.backupDir);
+        if (!backupDirStats.isDirectory() || backupDirStats.isSymbolicLink()) {
+            throw new Error('Unsafe tenant backup directory: not a real directory');
+        }
+        if (process.platform !== 'win32' && (
+            (backupDirStats.mode & 0o077) !== 0 ||
+            (process.getuid && backupDirStats.uid !== process.getuid()) ||
+            realpathSync(this.backupDir) !== path.resolve(this.backupDir))) {
+            throw new Error('Unsafe tenant backup directory: owner or permissions');
+        }
+        // Windows ACLs cannot be certified with POSIX mode bits; Windows
+        // backup-directory ACL verification remains a deployment acceptance gate.
         const file = path.join(this.backupDir,
             name + '_' + Date.now() + '_' + randomBytes(6).toString('hex') + '.dump');
         const partial = file + '.partial';
@@ -52,6 +64,10 @@ export class TenantBackupService {
         };
         let published = false;
         try {
+            // Reserve the exact random output path as an owner-only file before
+            // pg_dump opens it, preventing world-readable interim dump contents.
+            const reservedFd=openSync(partial,'wx',0o600);
+            closeSync(reservedFd);
             await this.run('pg_dump',[
                 '--format=custom','--no-owner','--no-acl',
                 '--no-password','--host',db.host,'--port',String(db.port),
