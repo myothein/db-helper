@@ -1,57 +1,104 @@
-import { TenantService } from "../tenants/tenant.service";
-import { PostgresProvider } from "../providers/postgres.provider";
-import { Logger } from "../utils/logger";
-import { exec } from "child_process";
-import path from "path";
-import fs from "fs";
+import { execFile } from 'node:child_process';
+import { createHash, randomBytes } from 'node:crypto';
+import { closeSync, createReadStream, existsSync, lstatSync, mkdirSync, openSync, readSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
+import { promisify } from 'node:util';
+import type { TenantService } from '../tenants/tenant.service';
+import type { PostgresProvider } from '../providers/postgres.provider';
+import { Logger } from '../utils/logger';
+import { parsePostgresDatabaseUrl, validateTenantName } from '../security/tenant-guards';
 
+export type BackupCommandRunner = (
+    exe: string, args: string[], options: { env: NodeJS.ProcessEnv; timeout: number }
+) => Promise<void>;
+const exec = promisify(execFile);
+const defaultRunner: BackupCommandRunner = async (exe, args, options) => {
+    await exec(exe, args, { ...options, maxBuffer: 1024 * 1024, windowsHide: true });
+};
+async function sha256(file: string): Promise<string> {
+    const hash = createHash('sha256');
+    for await (const chunk of createReadStream(file)) hash.update(chunk);
+    return hash.digest('hex');
+}
+
+/** A tenant backup is never an unescaped shell command or a plaintext SQL dump. */
 export class TenantBackupService {
     constructor(
         private readonly provider: PostgresProvider,
-        private readonly tenantService: TenantService
+        private readonly tenantService: TenantService,
+        private readonly run: BackupCommandRunner = defaultRunner,
+        private readonly backupDir: string = path.resolve('backups')
     ) {}
 
-    async backupTenant(tenantName: string): Promise<string> {
-        Logger.info(`Backing up tenant: ${tenantName}`);
-
-        const tenant = await this.tenantService.getTenantByName(tenantName);
-        if (!tenant) {
-            throw new Error(`Tenant "${tenantName}" not found`);
+    async backupTenant(name: string): Promise<string> {
+        validateTenantName(name);
+        const tenant = await this.tenantService.getTenantByName(name);
+        if (!tenant?.databaseUrl) throw new Error('Tenant backup source is not configured');
+        const db = parsePostgresDatabaseUrl(tenant.databaseUrl);
+        // Never trust a tenant registry URL solely because the lookup key matched.
+        // A stale or malicious registry mapping could otherwise export another
+        // university tenant's database into this tenant's backup artifact.
+        if (db.database !== name) {
+            throw new Error('Tenant backup source database does not match requested tenant');
         }
-
-        if (!tenant.databaseUrl) {
-            throw new Error(`Tenant "${tenantName}" has no databaseUrl`);
+        // Connection URLs are not logged, embedded in shell commands or written to manifests.
+        mkdirSync(this.backupDir, {recursive:true,mode:0o700});
+        const backupDirStats=lstatSync(this.backupDir);
+        if (!backupDirStats.isDirectory() || backupDirStats.isSymbolicLink()) {
+            throw new Error('Unsafe tenant backup directory: not a real directory');
         }
-
-        const backupDir = path.resolve("backups");
-        fs.mkdirSync(backupDir, { recursive: true });
-
-        const backupFile = path.join(
-            backupDir,
-            `${tenantName}_${Date.now()}.sql`
-        );
-
-        const url = new URL(tenant.databaseUrl);
-
-        const cmd = [
-            "pg_dump",
-            `-h ${url.hostname}`,
-            `-p ${url.port || 5432}`,
-            `-U ${url.username}`,
-            `-d ${url.pathname.replace("/", "")}`,
-            `-f "${backupFile}"`
-        ].join(" ");
-
-        Logger.info(`Backing up tenant "${tenantName}" → ${backupFile}`);
-
-        await new Promise<void>((resolve, reject) => {
-            exec(
-                cmd,
-                { env: { ...process.env, PGPASSWORD: url.password } },
-                (err) => (err ? reject(err) : resolve())
-            );
-        });
-
-        return backupFile;
+        if (process.platform !== 'win32' && (
+            (backupDirStats.mode & 0o077) !== 0 ||
+            (process.getuid && backupDirStats.uid !== process.getuid()) ||
+            realpathSync(this.backupDir) !== path.resolve(this.backupDir))) {
+            throw new Error('Unsafe tenant backup directory: owner or permissions');
+        }
+        // Windows ACLs cannot be certified with POSIX mode bits; Windows
+        // backup-directory ACL verification remains a deployment acceptance gate.
+        const file = path.join(this.backupDir,
+            name + '_' + Date.now() + '_' + randomBytes(6).toString('hex') + '.dump');
+        const partial = file + '.partial';
+        const env: NodeJS.ProcessEnv = {
+            ...process.env, PGPASSWORD: db.password,
+            ...(db.sslmode ? { PGSSLMODE:db.sslmode } : {})
+        };
+        let published = false;
+        try {
+            // Reserve the exact random output path as an owner-only file before
+            // pg_dump opens it, preventing world-readable interim dump contents.
+            const reservedFd=openSync(partial,'wx',0o600);
+            closeSync(reservedFd);
+            await this.run('pg_dump',[
+                '--format=custom','--no-owner','--no-acl',
+                '--no-password','--host',db.host,'--port',String(db.port),
+                '--username',db.user,'--dbname',db.database,'--file',partial
+            ],{env,timeout:300_000});
+            if (!existsSync(partial) || statSync(partial).size < 64) {
+                throw new Error('Missing or truncated PostgreSQL archive');
+            }
+            const signature = Buffer.alloc(5);
+            const fd = openSync(partial, 'r');
+            try {
+                if (readSync(fd, signature, 0, 5, 0) !== 5 ||
+                    signature.toString('ascii') !== 'PGDMP') {
+                    throw new Error('Invalid PostgreSQL custom-format archive');
+                }
+            } finally { closeSync(fd); }
+            // pg_restore --list checks that the archive is parseable, without DB writes.
+            await this.run('pg_restore',['--list',partial],{env,timeout:30_000});
+            const digest=await sha256(partial);
+            renameSync(partial,file);
+            published=true;
+            writeFileSync(file+'.sha256',digest+'  '+path.basename(file)+'\n',
+                {encoding:'utf8',flag:'wx',mode:0o600});
+            Logger.info('Verified tenant backup created: '+name+' ('+path.basename(file)+')');
+            return file;
+        } catch {
+            // Keep unverified outputs from being confused with successful backup artifacts.
+            for(const target of [partial,...(published ? [file,file+'.sha256'] : [])]) {
+                try{ if(existsSync(target))unlinkSync(target); }catch{}
+            }
+            throw new Error('Tenant backup failed validation; no successful backup published');
+        }
     }
 }

@@ -1,50 +1,14 @@
-import { execSync } from "child_process";
-import fs from "fs";
-import { PostgresProvider } from "../providers/postgres.provider";
-import { Logger } from "../utils/logger";
+import type { PostgresProvider } from '../providers/postgres.provider';
 
+/**
+ * The previous restore path killed client sessions, dropped the target DB and
+ * executed SQL through a shell string with no independent restore test.
+ * The API stays present but ALWAYS fails closed until safe staged restore with
+ * explicit approval, target allowlist and verification has been implemented.
+ */
 export class TenantRestoreService {
-    constructor(private provider: PostgresProvider) {}
-
-    async restoreTenant(
-        tenantName: string,
-        backupFile: string,
-        dropExisting = true
-    ) {
-        if (!fs.existsSync(backupFile)) {
-            throw new Error(`Backup file not found: ${backupFile}`);
-        }
-
-        Logger.warn(`Restoring tenant "${tenantName}" from ${backupFile}`);
-
-        await this.provider.connect();
-
-        // 1️⃣ Kill active connections
-        await this.provider.execute(`
-            SELECT pg_terminate_backend(pid)
-            FROM pg_stat_activity
-            WHERE datname = $1
-        `, [tenantName]);
-
-        // 2️⃣ Drop DB
-        if (dropExisting) {
-            Logger.warn(`Dropping existing database "${tenantName}"`);
-            await this.provider.execute(`DROP DATABASE IF EXISTS "${tenantName}"`);
-        }
-
-        // 3️⃣ Recreate DB
-        Logger.info(`Creating database "${tenantName}"`);
-        await this.provider.execute(`CREATE DATABASE "${tenantName}"`);
-
-        // 4️⃣ Restore dump
-        const cmd = `
-psql \
-"${process.env.DATABASE_URL!.replace(/\/[^/]+$/, `/${tenantName}`)}" \
--f "${backupFile}"
-        `;
-
-        execSync(cmd, { stdio: "inherit" });
-
-        Logger.info(`Tenant "${tenantName}" restored successfully`);
+    constructor(private readonly provider: PostgresProvider) {}
+    async restoreTenant(_tenantName: string, _backupFile: string, _dropExisting = true): Promise<never> {
+        throw new Error('Unsafe tenant restore disabled: use independently approved isolated restore QA');
     }
 }

@@ -10,7 +10,7 @@
     "db-helper-studio": "dist/cli-studio.js"
   },
   "scripts": {
-    "build": "pnpm run clean && tsup",
+    "build": "npm run clean && tsup",
     "dev": "tsx src/cli.ts",
     "generate": "ts-node src/generate-db-helper.ts",
     "lint": "eslint . --ext .ts",

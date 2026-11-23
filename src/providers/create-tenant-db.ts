@@ -1,38 +1,15 @@
-import pg from "pg";
-import { dbConfig } from "../config/db.config";
-import { Logger } from "../utils/logger";
+import { validateTenantName } from '../security/tenant-guards';
 
-export async function createTenantDatabase(tenantName: string): Promise<void> {
-    const url = new URL(dbConfig.systemDatabaseUrl);
-
-    const adminDb = "postgres";
-    url.pathname = `/${adminDb}`;
-
-    const pool = new pg.Pool({
-        host: url.hostname,
-        port: parseInt(url.port || "5432", 10),
-        user: url.username,
-        password: url.password,
-        database: adminDb,
-    });
-
-    const client = await pool.connect();
-
-    try {
-        const res = await client.query(
-            `SELECT 1 FROM pg_database WHERE datname = $1`,
-            [tenantName]
-        );
-
-        if (res.rowCount === 0) {
-            Logger.info(`Creating tenant database "${tenantName}"`);
-            await client.query(`CREATE DATABASE "${tenantName}"`);
-            Logger.info(`Tenant database "${tenantName}" created`);
-        } else {
-            Logger.info(`Tenant database "${tenantName}" already exists`);
-        }
-    } finally {
-        client.release();
-        await pool.end();
-    }
+/**
+ * Legacy privileged provisioning previously interpolated tenant identifiers into
+ * CREATE DATABASE. This public entry point must never mutate a live database
+ * until operator approval, external secret-store credentials and audited
+ * production provisioning exist.
+ *
+ * The QA-only PostgreSQL 17 implementation lives in
+ * src/security/ci-tenant-provisioner.ts and is not exposed here.
+ */
+export async function createTenantDatabase(tenantName: string): Promise<never> {
+    validateTenantName(tenantName);
+    throw new Error('Legacy privileged tenant database creation is disabled pending audited provisioning');
 }

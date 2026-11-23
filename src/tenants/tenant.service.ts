@@ -1,4 +1,5 @@
 import { PostgresProvider } from "../providers/postgres.provider";
+import { validateTenantName } from "../security/tenant-guards";
 import { Tenant } from "./tenant.types";
 import { dbConfig } from "../config/db.config";
 import { Logger } from "../utils/logger";
@@ -25,28 +26,11 @@ export class TenantService {
     ============================ */
 
     async createTenant(name: string): Promise<Tenant> {
-        const system = this.provider.getSystemClient();
-
-        const existing = await system.tenant.findUnique({ where: { name } });
-        if (existing) {
-            Logger.info(`Tenant "${name}" already exists. Reusing.`);
-            return existing;
-        }
-
-        const databaseUrl =
-            dbConfig.defaultTenantDatabaseUrlTemplate.replace("{tenant}", name);
-
-        // Create physical DB
-        await this.provider.getTenantConnection(name);
-
-        Logger.info(`Registering tenant "${name}" in system DB`);
-        return system.tenant.create({
-            data: {
-                name,
-                databaseUrl,
-                isActive: true,
-            },
-        });
+        validateTenantName(name);
+        // The old method persisted databaseUrl (including credentials) in the
+        // system registry and reused existing tenants without authorization.
+        // A reviewed secret-store registration workflow is still required.
+        throw new Error('Legacy tenant registration disabled: provision via approved isolated workflow');
     }
 
     /* ============================
@@ -79,40 +63,9 @@ export class TenantService {
     ============================ */
 
     async dropTenant(name: string): Promise<void> {
-        const system = this.provider.getSystemClient();
-
-        // 🔐 Safety guard
-        if (name === "system_db" || name === "postgres") {
-            throw new Error(`Refusing to drop protected database: ${name}`);
-        }
-
-        const tenant = await system.tenant.findUnique({ where: { name } });
-        if (!tenant) {
-            throw new Error(`Tenant "${name}" not found`);
-        }
-
-        Logger.warn(`Dropping tenant "${name}"`);
-
-        // 1️⃣ Disconnect Prisma tenant client if exists
-        await this.provider.disconnectTenant(name);
-
-        // 2️⃣ Kill active connections
-        await system.$executeRawUnsafe(`
-            SELECT pg_terminate_backend(pid)
-            FROM pg_stat_activity
-            WHERE datname = '${name}'
-        `);
-
-        // 3️⃣ Drop database
-        await system.$executeRawUnsafe(
-            `DROP DATABASE IF EXISTS "${name}"`
-        );
-
-        // 4️⃣ Remove tenant record
-        await system.tenant.delete({
-            where: { id: tenant.id },
-        });
-
-        Logger.info(`Tenant "${name}" dropped successfully`);
+        validateTenantName(name);
+        // Historical implementation interpolated untrusted identifiers and dropped
+        // databases without a reviewed restore; preserve data until a safe release.
+        throw new Error("Destructive tenant drop disabled pending verified backup/restore and approval");
     }
 }

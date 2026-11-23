@@ -1,3 +1,4 @@
+import { validateTenantName } from "../security/tenant-guards";
 // packages/db-helper/src/providers/postgres.provider.ts
 
 import { PrismaClient as SystemPrismaClient } from "../../generated/system";
@@ -28,6 +29,7 @@ export class PostgresProvider
     async connect(): Promise<void> {
         if (this.systemClient) return;
 
+        if (!dbConfig.systemDatabaseUrl) throw new Error("SYSTEM_DATABASE_URL is not configured");
         Logger.info("Connecting system database...");
 
         const pool = new Pool({
@@ -75,6 +77,11 @@ export class PostgresProvider
     ============================ */
     /** Return the full tenant database URL */
     getTenantDatabaseUrl(tenantName: string): string {
+        validateTenantName(tenantName);
+        if (!dbConfig.defaultTenantDatabaseUrlTemplate ||
+            !dbConfig.defaultTenantDatabaseUrlTemplate.includes("{tenant}")) {
+            throw new Error("DEFAULT_TENANT_DB_URL_TEMPLATE is not configured");
+        }
         return dbConfig.defaultTenantDatabaseUrlTemplate.replace("{tenant}", tenantName);
     }
 
@@ -87,7 +94,7 @@ export class PostgresProvider
         const tenantUrl = this.getTenantDatabaseUrl(tenantName);
 
         // Log full URL (shows actual password)
-        Logger.info(`Connecting tenant database: ${tenantName} at ${tenantUrl}`);
+        Logger.info(`Connecting tenant database: ${tenantName}`);
 
         // Ensure tenant DB exists before connecting
         await this.ensureTenantExists(tenantUrl, tenantName);
@@ -132,6 +139,8 @@ export class PostgresProvider
         });
 
         const dbName = parsed.pathname.replace(/^\//, "");
+        if (dbName !== tenantName) throw new Error("Tenant database name mismatch");
+        validateTenantName(dbName);
         const client = await pool.connect();
 
         try {
@@ -141,9 +150,7 @@ export class PostgresProvider
             );
 
             if (res.rowCount === 0) {
-                Logger.info(`Tenant database "${dbName}" does not exist. Creating...`);
-                await client.query(`CREATE DATABASE "${dbName}"`);
-                Logger.info(`Tenant database "${dbName}" created.`);
+                throw new Error("Tenant database is missing; automatic creation is disabled");
             }
         } finally {
             client.release();
