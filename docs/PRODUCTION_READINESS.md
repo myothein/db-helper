@@ -17,3 +17,11 @@
 - [ ] Require independent review, security scan, signed artifacts where applicable, restore drill and approved release go/no-go.
 
 Do not integrate with UIMS V1 until the six infrastructure repositories pass their release gates. No production deployment is authorized by this PR.
+
+
+## 2026-11-23 — Student-write idempotency additive migration (Draft only)
+
+- Added source Prisma model `StudentWriteIdempotency` and immutable, additive tenant migration `20261123151000_student_write_idempotency`; no existing table is dropped or changed.
+- The table uses a composite primary key `(tenant_code, key_digest)` for serialized concurrent retries, principal/operation/resource/request digests for conflict detection, and an optional minimal JSON response recorded with the domain + outbox transaction. Raw request keys, student names, contacts and medical fields must never be stored here.
+- Review migration and restore from a **verified independent backup** before any non-disposable environment. Apply initial tenant migration → local_events migration → replay-ledger migration in order. Do not run this migration on production without separate written owner approval.
+- **Operational acceptance remains pending:** least-privilege column/table grants, database migration parity, historical exposure cleanup, replay-ledger retention/restore policy, and consistent client rollout. The table is intentionally not deleted automatically; automatic TTL cleanup would permit duplicate writes after key expiry.
