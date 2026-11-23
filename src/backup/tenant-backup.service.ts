@@ -35,6 +35,12 @@ export class TenantBackupService {
         const tenant = await this.tenantService.getTenantByName(name);
         if (!tenant?.databaseUrl) throw new Error('Tenant backup source is not configured');
         const db = parsePostgresDatabaseUrl(tenant.databaseUrl);
+        // Never trust a tenant registry URL solely because the lookup key matched.
+        // A stale or malicious registry mapping could otherwise export another
+        // university tenant's database into this tenant's backup artifact.
+        if (db.database !== name) {
+            throw new Error('Tenant backup source database does not match requested tenant');
+        }
         // Connection URLs are not logged, embedded in shell commands or written to manifests.
         mkdirSync(this.backupDir, {recursive:true,mode:0o700});
         const file = path.join(this.backupDir,
