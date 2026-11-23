@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { mkdtempSync, readFileSync, readdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { validateTenantName, parsePostgresDatabaseUrl } from '../security/tenant-guards';
@@ -36,6 +36,9 @@ describe('verified tenant backups never execute a shell command', () => {
             executed.push({exe,args,env:opts.env});
             if(exe==='pg_dump') {
                 const target=args[args.indexOf('--file')+1];
+                if(process.platform !== 'win32') {
+                    expect(statSync(target).mode & 0o777).toBe(0o600);
+                }
                 writeFileSync(target,Buffer.concat([Buffer.from('PGDMP'),
                     Buffer.alloc(128,1)]));
             } else if(exe!=='pg_restore') throw Error('unexpected subprocess');
@@ -106,6 +109,22 @@ describe('verified tenant backups never execute a shell command', () => {
             expect(runner).not.toHaveBeenCalled();
             expect(readdirSync(root)).toEqual([]);
         } finally {rmSync(root,{recursive:true,force:true});}
+    });
+    it('rejects world-readable existing backup directory before spawning dump',async()=>{
+        if(process.platform==='win32')return;
+        const root=mkdtempSync(path.join(tmpdir(),'db-helper-permissions-'));
+        const dir=path.join(root,'readable');
+        mkdirSync(dir,{mode:0o755});
+        const runner=vi.fn<Parameters<BackupCommandRunner>,ReturnType<BackupCommandRunner>>();
+        const tenant={getTenantByName:async()=>({
+            databaseUrl:'postgresql://qa_user:synthetic-password@localhost:5432/tenant_ci'
+        })} as unknown as TenantService;
+        try {
+            const svc=new TenantBackupService({} as PostgresProvider,tenant,runner,dir);
+            await expect(svc.backupTenant('tenant_ci')).rejects.toThrow(/owner or permissions/);
+            expect(runner).not.toHaveBeenCalled();
+            expect(readdirSync(dir)).toEqual([]);
+        }finally{rmSync(root,{recursive:true,force:true});}
     });
     it('rejects bad tenant identifiers before contacting DB provider', async()=>{
         const tenant={getTenantByName:vi.fn()} as unknown as TenantService;
